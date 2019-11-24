@@ -1,10 +1,6 @@
-use crate::Chip8;
+use crate::{WIDTH, HEIGHT, VF, Chip8};
 
 use rand::{Rng, rngs::ThreadRng};
-
-const WIDTH: usize = 64;
-const HEIGHT: usize = 32;
-const VF: usize = 15;
 
 /// (0nnn - SYS addr)
 /// Jump to a machine code routine at nnn.
@@ -121,6 +117,14 @@ pub fn ld_register_byte(chip8: &mut Chip8, opcode: u16) {
 /// 
 /// Adds the value kk to the value of register Vx, then stores the result in Vx.
 pub fn add_register_byte(chip8: &mut Chip8, opcode: u16) {
+    let v_x = decode_register_x(opcode) as usize;
+    let kk = decode_byte(opcode);
+
+    let value = chip8.registers[v_x];
+
+    println!("Adding value {:#X?} to V{:X?} ({:#X?})", kk, v_x, value);
+
+    chip8.registers[v_x] = value.wrapping_add(kk);
 }
 
 /// (8xy0 - LD Vx, Vy)
@@ -218,6 +222,12 @@ pub fn sub_registers(chip8: &mut Chip8, opcode: u16) {
 /// If the least-significant bit of Vx is 1, then VF is set to 1, otherwise 0. Then Vx
 /// is divided by 2.
 pub fn shr_registers(chip8: &mut Chip8, opcode: u16) {
+    let v_x = decode_register_x(opcode) as usize;
+
+    let lsb = chip8.registers[v_x] & 0b00000001;
+    chip8.registers[VF] = lsb;
+
+    chip8.registers[v_x] = (chip8.registers[v_x] - lsb) / 2
 }
 
 /// (8xy7 - SUBN Vx, Vy)
@@ -241,6 +251,12 @@ pub fn subn_registers(chip8: &mut Chip8, opcode: u16) {
 /// If the most-significant bit of Vx is 1, then VF is set to 1, otherwise to 0. Then Vx
 /// is multiplied by 2.
 pub fn shl_registers(chip8: &mut Chip8, opcode: u16) {
+    let v_x = decode_register_x(opcode) as usize;
+
+    let msb = chip8.registers[v_x] & 0b00000001;
+    chip8.registers[VF] = msb;
+
+    chip8.registers[v_x] = chip8.registers[v_x] * 2
 }
 
 /// (9xy0 - SNE Vx, Vy)
@@ -249,6 +265,11 @@ pub fn shl_registers(chip8: &mut Chip8, opcode: u16) {
 /// The values of Vx and Vy are compared, and if they are not equal, the program counter
 /// is increased by 2.
 pub fn sne_registers(chip8: &mut Chip8, opcode: u16) {
+    let (v_x, v_y) = decode_registers(opcode);
+
+    if chip8.registers[v_x as usize] != chip8.registers[v_y as usize] {
+        chip8.pc += 2;
+    }
 }
 
 /// (Annn - LD I, addr)
@@ -256,7 +277,7 @@ pub fn sne_registers(chip8: &mut Chip8, opcode: u16) {
 /// 
 /// The value of register I is set to nnn.
 pub fn ld_i_byte(chip8: &mut Chip8, opcode: u16) {
-    chip8.i = chip8.opcode & 0x0FFF;
+    chip8.i = opcode & 0x0FFF;
 
     println!("Set I to {:#X?}", chip8.i);
 }
@@ -290,7 +311,7 @@ pub fn rnd(chip8: &mut Chip8, opcode: u16) {
     chip8.registers[x as usize] = random & kk;
 }
 
-/// (Dxyn - DRW Vx, Vy, nibble)
+/// (Dxyn - DRW Vx, Vy, n)
 /// Display n-byte sprite starting at memory location I at (Vx, Vy), set VF = collision.
 /// 
 /// The interpreter reads n bytes from memory, starting at the address stored in I.
@@ -302,13 +323,33 @@ pub fn rnd(chip8: &mut Chip8, opcode: u16) {
 /// Display, for more information on the Chip-8 screen and sprites.
 pub fn drw_draw_sprite(chip8: &mut Chip8, opcode: u16) {
     let (v_x, v_y) = decode_registers(opcode);
-    let n_bytes = decode_byte(opcode);
+    let n = (opcode & 0x000F) as u8;
 
     let x = chip8.registers[v_x as usize];
     let y = chip8.registers[v_y as usize];
 
     let start = chip8.i as usize;
-    let end = start + n_bytes;
+    let end = start + n as usize;
+
+    let read = &chip8.memory[start..end];
+
+    println!("At position ({}, {}), draw:", x, y);
+    for byte in read {
+        println!("{:08b}", byte);
+    }
+
+    for byte in 0u8..n {
+        let idx = (y as usize + byte as usize) * WIDTH + x as usize;
+        // let idx = (x as usize + byte as usize) * HEIGHT + y as usize;
+        let bits = binary_to_vec(read[byte as usize]);
+        // chip8.display[idx] = bits; 
+        println!("{:08b}, {:?}", byte, bits);
+
+        for (jdx, bit) in bits.iter().enumerate() {
+            println!("{}, {}", jdx, bit);
+            chip8.display[idx+jdx] = *bit as u32 * 255;
+        }
+    }
 }
 
 /// (Ex9E - SKP Vx)
@@ -329,7 +370,11 @@ pub fn sknp_skip_not_pressed(chip8: &mut Chip8, opcode: u16) {}
 /// Set Vx = delay timer value.
 /// 
 /// The value of DT is placed into Vx.
-pub fn ld_get_delay_timer(chip8: &mut Chip8, opcode: u16) {}
+pub fn ld_get_delay_timer(chip8: &mut Chip8, opcode: u16) {
+    let v_x = (chip8.opcode & 0x0F00) >> 8;
+
+    chip8.registers[v_x as usize] = chip8.delay_timer;
+}
 
 /// (Fx0A - LD Vx, K)
 /// Wait for a key press, store the value of the key in Vx.
@@ -369,21 +414,44 @@ pub fn ld_i_to_sprite(chip8: &mut Chip8, opcode: u16) {}
 /// The interpreter takes the decimal value of Vx, and places the hundreds digit in
 /// memory at location in I, the tens digit at location I+1, and the ones digit at
 /// location I+2.
-pub fn ld_bcd(chip8: &mut Chip8, opcode: u16) {}
+pub fn ld_bcd(chip8: &mut Chip8, opcode: u16) {
+    let v_x = decode_register_x(opcode) as usize;
+    let mut x = chip8.registers[v_x];
+
+    let hundreds = x - x % 100;
+    x -= hundreds;
+
+    let tens = x - x % 10;
+    let ones = x - tens;
+
+    println!("{}", chip8.registers[v_x]);
+    println!("{}, {}, {}", hundreds, tens, ones);
+}
 
 /// (Fx55 - LD [I], Vx)
 /// Store registers V0 through Vx in memory starting at location I.
 /// 
 /// The interpreter copies the values of registers V0 through Vx into memory, starting
 /// at the address in I.
-pub fn ld_store_registers(chip8: &mut Chip8, opcode: u16) {}
+pub fn ld_store_registers(chip8: &mut Chip8, opcode: u16) {
+    let v_x = decode_register_x(opcode);
+    let i = chip8.i as usize;
+
+    for (idx, register) in (v_x..16).enumerate() {
+        println!("{}, {}", idx, register);
+
+        chip8.memory[i + idx] = chip8.registers[register as usize];
+    }
+}
 
 /// (Fx65 - LD Vx, [I])
 /// Read registers V0 through Vx from memory starting at location I.
 /// 
 /// The interpreter reads values from memory starting at location I into registers
 /// V0 through Vx.
-pub fn ld_read_registers(chip8: &mut Chip8, opcode: u16) {}
+pub fn ld_read_registers(chip8: &mut Chip8, opcode: u16) {
+
+}
 
 fn decode_register_x(opcode: u16) -> u8 {
     let v_x = (opcode & 0x0F00) >> 8;
@@ -406,5 +474,37 @@ fn decode_byte(opcode: u16) -> u8 {
 }
 
 fn decode_short(opcode: u16) -> u16 {
-    (opcode& 0x0FFF)
+    (opcode & 0x0FFF)
+}
+
+fn binary_to_vec(mut binary: u8) -> Vec<u8> {
+    let mut values = Vec::new();
+
+    for _ in 0..8 {
+        values.push((binary & 0b10000000) >> 7);
+        binary = binary << 1;
+    }
+
+    return values;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_decode_short() {
+        let result = decode_short(0xABCD);
+        let expected = 0xBCD;
+
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_binary_to_vec() {
+        let result = binary_to_vec(0b00101010);
+        let expected = vec!(0, 0, 1, 0, 1, 0, 1, 0);
+
+        assert_eq!(result, expected);
+    }
 }

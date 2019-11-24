@@ -9,7 +9,7 @@ use std::{
     io::prelude::*,
 };
 use rand::{Rng, rngs::ThreadRng};
-use minifb::{Key, WindowOptions, Window, Scale};
+use minifb::{Key, WindowOptions, Window, Scale, KeyRepeat};
 
 const MEMORY: usize = 4096;
 const WIDTH: usize = 64;
@@ -81,9 +81,7 @@ impl Chip8 {
         println!("{:#X?} Opcode: {:#X?}", pc, opcode);
 
         // Decode opcode
-        let instruction = self.opcode & 0xF000;
-
-        match instruction {
+        match opcode & 0xF000 {
             0x0000 => {
                 match self.opcode & 0x00FF {
                     0x00E0 => ops::cls_clear_display(self, opcode),
@@ -99,7 +97,7 @@ impl Chip8 {
             0x6000 => ops::ld_register_byte(self, opcode),
             0x7000 => ops::add_register_byte(self, opcode),
             0x8000 => {
-                match self.opcode & 0x000F {
+                match opcode & 0x000F {
                     0x0000 => ops::ld_registers(self, opcode),
                     0x0001 => ops::or_registers(self, opcode),
                     0x0002 => ops::and_registers(self, opcode),
@@ -112,65 +110,27 @@ impl Chip8 {
                     _ => {},
                 }
             },
-            0x9000 => {},
+            0x9000 => ops::sne_registers(self, opcode),
             0xA000 => ops::ld_i_byte(self, opcode),
             0xB000 => ops::jp_bnnn(self, opcode),
             0xC000 => ops::rnd(self, opcode),
-            0xD000 => {
-                let n_bytes = (self.opcode & 0x000F) as usize;
-
-                let v_x = (self.opcode & 0x0F00) >> 8;
-                let v_y = (self.opcode & 0x00F0) >> 4;
-
-                let x = self.registers[v_x as usize];
-                let y = self.registers[v_y as usize];
-
-                let start = self.i as usize;
-                let end = start + n_bytes;
-
-                let sprite = &self.memory[start..end];
-
-                println!("Draw {:?}, to ({}, {})", sprite, x, y);
-
-                // let draw_start = y as usize * WIDTH + x as usize;
-                let draw_start = y as usize + (x - 1) as usize * HEIGHT;
-
-                for (idx, byte) in sprite.iter().enumerate() {
-                    self.display[draw_start + idx] = *byte as u32;
-                }
-            },
+            0xD000 => ops::drw_draw_sprite(self, opcode),
             0xE000 => {
                 match self.opcode & 0xF0FF {
-                    0xE09E => {},
-                    0xE0A1 => {},
+                    0xE09E => ops::skp_skip_pressed(self, opcode),
+                    0xE0A1 => ops::sknp_skip_not_pressed(self, opcode),
                     _ => {},
                 }
             },
             0xF000 => {
                 match self.opcode & 0xF0FF {
-                    0xF007 => {
-                        let v_x = (self.opcode & 0x0F00) >> 8;
-
-                        self.registers[v_x as usize] = self.delay_timer;
-                    },
-                    0xF00A => {},
-                    0xF015 => {},
+                    0xF007 => ops::ld_get_delay_timer(self, opcode),
+                    0xF00A => ops::ld_wait_for_key(self, opcode),
+                    0xF015 => ops::ld_set_delay_timer(self, opcode),
                     0xF018 => {},
                     0xF01E => {},
                     0xF029 => {},
-                    0xF033 => {
-                        let v_x = (self.opcode & 0x0F00) >> 8;
-                        let mut x = self.registers[v_x as usize];
-
-                        let hundreds = x - x % 100;
-                        x -= hundreds;
-
-                        let tens = x - x % 10;
-                        let ones = x - tens;
-
-                        println!("{}", self.registers[v_x as usize]);
-                        println!("{}, {}, {}", hundreds, tens, ones);
-                    },
+                    0xF033 => ops::ld_bcd(self, opcode),
                     0xF055 => {},
                     0xF065 => {},
                     _ => {},
@@ -202,10 +162,14 @@ impl Chip8 {
 }
 
 fn main() {
+    let mut dirty = true;
+    let mut run = true;
+
     let mut chip8 = Chip8::new();
 
     // Load game
-    chip8.load_rom("/home/abe/src/chip8_roms/roms/games/Pong (1 player).ch8")
+    // chip8.load_rom("/home/abe/src/chip8_roms/roms/games/Pong (1 player).ch8")
+    chip8.load_rom("/home/abe/src/chip8/roms/test_opcode.ch8")
         .expect("Could not open file");
 
     // Prepare frame buffer
@@ -220,11 +184,27 @@ fn main() {
         .unwrap_or_else(|e| { panic!("{}", e); });
 
     while window.is_open() && !window.is_key_down(Key::Escape) {
-        chip8.cycle();
+        if !dirty {
+            window.update();
+        } else {
+            chip8.cycle();
 
-        // Draw graphics
-        window.update_with_buffer(&chip8.display).unwrap();
+            // Draw graphics
+            window.update_with_buffer(&chip8.display).unwrap();
+
+            if !run {
+                dirty = false;
+            }
+        }
 
         // Set keys
+        let keys = window.get_keys_pressed(KeyRepeat::Yes).unwrap();
+
+        if keys.len() > 0 {
+            dirty = true;
+        }
+
+        let wait_time = time::Duration::from_millis(30);
+        thread::sleep(wait_time);
     }
 }
