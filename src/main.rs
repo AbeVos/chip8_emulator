@@ -2,6 +2,7 @@ extern crate rand;
 extern crate minifb;
 
 mod ops;
+mod screen;
 
 use std::{
     io, thread, time,
@@ -10,6 +11,7 @@ use std::{
 };
 use rand::{Rng, rngs::ThreadRng};
 use minifb::{Key, WindowOptions, Window, Scale, KeyRepeat};
+use screen::{Point, Buffer, Screen};
 
 const MEMORY: usize = 4096;
 const WIDTH: usize = 64;
@@ -26,7 +28,7 @@ pub struct Chip8 {
 
     registers: [u8; 16],
     memory: [u8; MEMORY],
-    display: [u32; WIDTH * HEIGHT],
+    display: Buffer,
 
     delay_timer: u8,
     sound_timer: u8,
@@ -46,7 +48,7 @@ impl Chip8 {
 
             registers: [0; 16],
             memory: [0; MEMORY],
-            display: [0; WIDTH * HEIGHT],
+            display: Buffer::new(WIDTH, HEIGHT, None),
 
             delay_timer: 0,
             sound_timer: 0,
@@ -69,7 +71,7 @@ impl Chip8 {
         Ok(())
     }
 
-    fn cycle(&mut self) {
+    fn cycle(&mut self) -> u16 {
         let pc = self.pc as usize;
 
         // Fetch opcode
@@ -158,13 +160,12 @@ impl Chip8 {
         }
 
         println!("");
+
+        return opcode;
     }
 }
 
 fn main() {
-    let mut dirty = true;
-    let mut run = true;
-
     let mut chip8 = Chip8::new();
 
     // Load game
@@ -172,37 +173,20 @@ fn main() {
     chip8.load_rom("/home/abe/src/chip8/roms/test_opcode.ch8")
         .expect("Could not open file");
 
-    // Prepare frame buffer
-    let mut window = Window::new(
-        "CHIP-8 - ESC to exit",
-        WIDTH, HEIGHT,
-        WindowOptions {
-            resize: false,
-            scale: Scale::X4,
-            ..WindowOptions::default()
-        })
-        .unwrap_or_else(|e| { panic!("{}", e); });
+    let mut screen = Screen::new(WIDTH, HEIGHT, 32, 32);
 
-    while window.is_open() && !window.is_key_down(Key::Escape) {
-        if !dirty {
-            window.update();
-        } else {
-            chip8.cycle();
-
-            // Draw graphics
-            window.update_with_buffer(&chip8.display).unwrap();
-
-            if !run {
-                dirty = false;
-            }
+    while screen.window.is_open() && !screen.window.is_key_down(Key::Escape) {
+        chip8.cycle();
+        
+        if chip8.display.dirty {
+            screen.game_buffer.blit(&chip8.display, Point::new(0, 0));
+            chip8.display.dirty = false;
         }
+
+        screen.update();
 
         // Set keys
-        let keys = window.get_keys_pressed(KeyRepeat::Yes).unwrap();
-
-        if keys.len() > 0 {
-            dirty = true;
-        }
+        let keys = screen.window.get_keys_pressed(KeyRepeat::Yes).unwrap();
 
         let wait_time = time::Duration::from_millis(30);
         thread::sleep(wait_time);

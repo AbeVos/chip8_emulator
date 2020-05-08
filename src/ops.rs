@@ -1,4 +1,5 @@
 use crate::{WIDTH, HEIGHT, VF, Chip8};
+use crate::screen::{Point, Buffer, Screen};
 
 use rand::{Rng, rngs::ThreadRng};
 
@@ -14,7 +15,7 @@ pub fn sys_jump_to_routine(chip8: &mut Chip8, opcode: u16) {
 /// Clear the display.
 pub fn cls_clear_display(chip8: &mut Chip8, _opcode: u16) {
     println!("Clear display");
-    chip8.display = [0; WIDTH * HEIGHT];
+    chip8.display.clear();
 }
 
 /// (00EE - RET)
@@ -325,8 +326,8 @@ pub fn drw_draw_sprite(chip8: &mut Chip8, opcode: u16) {
     let (v_x, v_y) = decode_registers(opcode);
     let n = (opcode & 0x000F) as u8;
 
-    let x = chip8.registers[v_x as usize];
-    let y = chip8.registers[v_y as usize];
+    let x = chip8.registers[v_x as usize] as usize;
+    let y = chip8.registers[v_y as usize] as usize;
 
     let start = chip8.i as usize;
     let end = start + n as usize;
@@ -338,11 +339,11 @@ pub fn drw_draw_sprite(chip8: &mut Chip8, opcode: u16) {
         println!("{:08b}", byte);
     }
 
+    /*
     for byte in 0u8..n {
         let idx = (y as usize + byte as usize) * WIDTH + x as usize;
-        // let idx = (x as usize + byte as usize) * HEIGHT + y as usize;
         let bits = binary_to_vec(read[byte as usize]);
-        // chip8.display[idx] = bits; 
+
         println!("{:08b}, {:?}", byte, bits);
 
         for (jdx, bit) in bits.iter().enumerate() {
@@ -350,6 +351,8 @@ pub fn drw_draw_sprite(chip8: &mut Chip8, opcode: u16) {
             chip8.display[idx+jdx] = *bit as u32 * 255;
         }
     }
+    */
+    chip8.display.blit(&binary_to_buffer(read.to_vec()), Point::new(x, y));
 }
 
 /// (Ex9E - SKP Vx)
@@ -486,6 +489,19 @@ fn binary_to_vec(mut binary: u8) -> Vec<u8> {
     }
 
     return values;
+}
+
+fn binary_to_buffer(binary: Vec<u8>) -> Buffer {
+    let mut pixels = Vec::new();
+    let height = binary.len();
+
+    for bin in binary {
+        for pixel in binary_to_vec(bin) {
+            pixels.push(pixel as u32 * 255);
+        }
+    }
+
+    Buffer::new(8, height, Some(pixels))
 }
 
 #[cfg(test)]
